@@ -158,9 +158,57 @@ void CANSimple::do_command(Axis& axis, const can_Message_t& msg) {
         case MSG_GET_CONTROLLER_ERROR:
             get_controller_error_callback(axis);
             break;
+        case MSG_GPIO_CMD:
+            set_gpio_state_callback(axis, msg);
+            break;
         default:
             break;
     }
+}
+
+void CANSimple::set_gpio_state_callback(Axis& axis, const can_Message_t& msg) {
+    GPIORequest requested_type = static_cast<GPIORequest>(can_getSignal<uint8_t>(msg, 0, 8, true));
+    uint8_t gpio_num = can_getSignal<uint8_t>(msg, 8, 8, true);
+    // Check if the GPIO number is valid
+    if (gpio_num >= GPIO_COUNT) {
+        return;
+    }
+    
+    bool gpio_state = false;
+    
+    switch (requested_type)
+    {
+        case GPIO_READ_REQUEST:
+        {
+            gpio_state = get_gpio(gpio_num).read();
+            break;
+        }
+        case GPIO_WRITE_REQUEST:
+        {
+            gpio_state = can_getSignal<bool>(msg, 16, 1, true);
+            get_gpio(gpio_num).write(gpio_state);
+            break;
+        }
+        case GPIO_CONFIG_REQUEST:
+        {
+             gpio_state = can_getSignal<bool>(msg, 16, 1, true);
+            get_gpio(gpio_num).config(gpio_state ? GPIO_MODE_OUTPUT_PP : GPIO_MODE_INPUT, GPIO_PULLUP);
+            break;
+        }
+    }
+
+    can_Message_t txmsg;
+
+    txmsg.id = axis.config_.can.node_id << NUM_CMD_ID_BITS;
+    txmsg.id += MSG_GPIO_CMD;  // GPIO message ID
+    txmsg.isExt = axis.config_.can.is_extended;
+    txmsg.len = 8;
+
+    can_setSignal<uint8_t>(txmsg, requested_type, 0, 8, true);
+    can_setSignal<uint8_t>(txmsg, gpio_num, 8, 8, true);
+    can_setSignal<bool>(txmsg, gpio_state, 16, 1, true);
+    
+    canbus_->send_message(txmsg);
 }
 
 void CANSimple::nmt_callback(const Axis& axis, const can_Message_t& msg) {
